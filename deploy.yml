@@ -31,4 +31,9 @@
         name: my_web_app
         state: restarted
         enabled: yes
+- name: Restart gunicorn (or your app service)
+  systemd:
+    name: gunicorn
+    state: restarted
+    enabled: yes
 
