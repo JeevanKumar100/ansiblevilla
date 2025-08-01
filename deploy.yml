@@ -1,0 +1,34 @@
+---
+- name: Deploy web application
+  hosts: all
+  become: yes
+
+  vars:
+    app_name: my_web_app
+    app_repo: "https://github.com/example/my_web_app.git"
+    app_dest: "/var/www/my_web_app"
+
+  tasks:
+    - name: Ensure Git is installed
+      apt:
+        name: git
+        state: present
+        update_cache: yes
+
+    - name: Clone application repository
+      git:
+        repo: "{{ app_repo }}"
+        dest: "{{ app_dest }}"
+        version: main
+        force: yes
+
+    - name: Install dependencies (example: using pip)
+      pip:
+        requirements: "{{ app_dest }}/requirements.txt"
+
+    - name: Restart application service
+      systemd:
+        name: my_web_app
+        state: restarted
+        enabled: yes
+

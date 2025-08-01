@@ -1,65 +1,88 @@
 ---
-- name: Install and Configure Jenkins on Ubuntu
+- name: Install Jenkins with port handling and diagnostics
   hosts: all
   become: yes
-
   vars:
-    jenkins_port: 8080
+    jenkins_port_default: 8080
+    jenkins_port_fallback: 8081
+    jenkins_config_path: /etc/default/jenkins
 
   tasks:
 
-    - name: Update apt cache
+    - name: Install required packages
       apt:
+        name:
+          - openjdk-17-jdk
+          - gnupg
+          - curl
+        state: present
         update_cache: yes
 
-    - name: Install required Java version
-      apt:
-        name: openjdk-11-jdk
-        state: present
-
-    - name: Add Jenkins key
+    - name: Add Jenkins repo key
       apt_key:
-        url: https://pkg.jenkins.io/debian/jenkins.io.key
+        url: https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key
         state: present
 
-    - name: Add Jenkins repo
+    - name: Add Jenkins apt repository
       apt_repository:
-        repo: deb https://pkg.jenkins.io/debian-stable binary/
+        repo: 'deb https://pkg.jenkins.io/debian-stable binary/'
         state: present
-
-    - name: Update apt again
-      apt:
-        update_cache: yes
+        filename: 'jenkins'
 
     - name: Install Jenkins
       apt:
         name: jenkins
-        state: present
+        state: latest
+        update_cache: yes
 
     - name: Check if port 8080 is in use
-      shell: "lsof -i:{{ jenkins_port }}"
+      command: lsof -i:{{ jenkins_port_default }}
       register: port_check
       ignore_errors: yes
 
-    - name: Fail if port 8080 is in use
-      fail:
-        msg: "Port {{ jenkins_port }} is already in use!"
-      when: port_check.rc == 0
+    - name: Set Jenkins port based on availability
+      set_fact:
+        jenkins_port: "{{ jenkins_port_fallback if port_check.rc == 0 else jenkins_port_default }}"
+
+    - name: Update Jenkins port in default config
+      lineinfile:
+        path: "{{ jenkins_config_path }}"
+        regexp: '^HTTP_PORT='
+        line: "HTTP_PORT={{ jenkins_port }}"
+        create: yes
+        backrefs: yes
+
+    - name: Ensure Jenkins home directory permissions
+      file:
+        path: /var/lib/jenkins
+        owner: jenkins
+        group: jenkins
+        recurse: yes
+
+    - name: Reload systemd daemon
+      command: systemctl daemon-reexec
 
     - name: Start and enable Jenkins
-      systemd:
+      service:
         name: jenkins
-        state: started
         enabled: yes
+        state: started
+      register: jenkins_start
+      ignore_errors: yes
 
-    - name: Allow Jenkins port in firewall (optional)
-      ufw:
-        rule: allow
-        port: "{{ jenkins_port }}"
-        proto: tcp
-      when: ansible_facts['distribution'] == "Ubuntu"
+    - name: Fail if Jenkins failed to start
+      fail:
+        msg: "Jenkins failed to start. Check logs below."
+      when: jenkins_start.failed
 
-    - name: Display initial Jenkins password path
+    - name: Show Jenkins logs if service failed
+      command: journalctl -xeu jenkins --no-pager
+      register: jenkins_logs
+      when: jenkins_start.failed
+      ignore_errors: yes
+
+    - name: Debug Jenkins logs
       debug:
-        msg: "Unlock Jenkins with password in: /var/lib/jenkins/secrets/initialAdminPassword"
+        var: jenkins_logs.stdout_lines
+      when: jenkins_start.failed
 
